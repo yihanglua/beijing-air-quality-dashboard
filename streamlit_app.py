@@ -692,8 +692,8 @@ with tab1:
                 rec = {"datetime": dt, **wx,
                        "pollution_lag1": H[-1], "pollution_lag2": H[-2], "pollution_roll_mean3": np.mean(H[-3:])}
                 X = build_X(rec)
-                tree_preds = np.array([t.predict(X) for t in rf_model.estimators_])
-                p = float(rf_model.predict(X.values)[0])
+                tree_preds = np.array([t.predict(X.values) for t in rf_model.estimators_])  # ✔️ No warnings here
+                p = float(rf_model.predict(X)[0])
                 ci = np.std(tree_preds) * 1.96
                 H.append(p)
                 preds.append({"datetime": dt, "pm25": p})
