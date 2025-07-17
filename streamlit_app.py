@@ -15,18 +15,18 @@ import random
 import gdown
 from datetime import datetime, timedelta, time as dtime
 
-# ── 1) Download and Load model & data ─────────────────────────────────────────
+# ── 1) Download and Load Model & Data ─────────────────────────────────────────
 
-# Create model directory
-MODEL_DIR = r"c:\Users\User\pollution_app_final"
+# Create model directory (optional, but can skip this)
+MODEL_DIR = "model_files"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # Model file paths
 MODEL_PATH = os.path.join(MODEL_DIR, "rf_tuned_model.joblib")
-SCALER_PATH = os.path.join(MODEL_DIR, "scaler.joblib")
-FEATURES_PATH = os.path.join(MODEL_DIR, "features.joblib")
-START_YEAR_PATH = os.path.join(MODEL_DIR, "start_year.joblib")
-CSV_PATH = os.path.join(MODEL_DIR, "pollution_data.csv")
+SCALER_PATH = "scaler.joblib"
+FEATURES_PATH = "features.joblib"
+START_YEAR_PATH = "start_year.joblib"
+CSV_PATH = "pollution_data.csv"
 
 # Download large model file from Google Drive if not exists
 if not os.path.exists(MODEL_PATH):
@@ -34,16 +34,15 @@ if not os.path.exists(MODEL_PATH):
     url = f"https://drive.google.com/uc?id={file_id}"
     gdown.download(url, MODEL_PATH, quiet=False)
 
-# Load model and other files (assuming other files are deployed with your app)
-import joblib
-
+# Load model and other files
 rf_model   = joblib.load(MODEL_PATH)
-scaler     = joblib.load(SCALER_PATH)
-FEATURES   = joblib.load(FEATURES_PATH)
-START_YEAR = joblib.load(START_YEAR_PATH)
+scaler     = joblib.load(SCALER_PATH)       # Ensure this is uploaded to GitHub
+FEATURES   = joblib.load(FEATURES_PATH)     # Ensure this is uploaded to GitHub
+START_YEAR = joblib.load(START_YEAR_PATH)   # Ensure this is uploaded to GitHub
 
+# Load pollution data CSV
 history = (
-    pd.read_csv(CSV_PATH, parse_dates=["date"])
+    pd.read_csv(CSV_PATH, parse_dates=["date"])   # Ensure CSV is uploaded to GitHub
       .rename(columns={"date": "datetime"})
       .set_index("datetime")
       .sort_index()
