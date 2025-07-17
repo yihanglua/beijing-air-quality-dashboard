@@ -673,63 +673,80 @@ with tab1:
             for k in ("df24", "conf_intervals", "next_val", "color", "hist_avg", "aqi_info"): 
                 st.session_state[k] = None
 
-        # 5) Set target time automatically (NO USER INPUT)
-        target_time = datetime.now(ZoneInfo('Asia/Kuala_Lumpur')).replace(minute=0, second=0, microsecond=0)
+        # 5) User selects target date/time (up to 1 month from now)
+        now = datetime.now(ZoneInfo('Asia/Kuala_Lumpur')).replace(minute=0, second=0, microsecond=0)
+        min_date = now.date() + timedelta(days=1)
+        max_date = now.date() + timedelta(days=30)
 
-        # Forecast for next 24 hours (you can adjust)
-        hours_ahead = 24
+        target_date = st.date_input(
+            "Select target date",
+            min_value=min_date,
+            max_value=max_date,
+            value=min_date
+        )
+        target_hour = st.selectbox("Select target hour", range(24), index=now.hour)
+        target_datetime = datetime.combine(target_date, dtime(hour=target_hour))
+        target_datetime = target_datetime.replace(tzinfo=ZoneInfo('Asia/Kuala_Lumpur'))
 
-        # 6) Trigger prediction automatically
-        # You can replace this with a button if you want manual trigger:
-        # if st.button("Predict PM₂.₅"):
-        if True:  # Always run
-            # Set random seed based on target_datetime to ensure reproducibility
-            seed = hash(str(target_time)) % (2*32)
-            random.seed(seed)
-            np.random.seed(seed)
+        # Forecast window: from now to target_datetime
+        hours_ahead = int((target_datetime - now).total_seconds() / 3600)
+        if hours_ahead <= 0:
+            st.error("Please select a future time after now.")
+        else:
+            st.write(f"Forecasting from now ({now:%Y-%m-%d %H:%M}) to target ({target_datetime:%Y-%m-%d %H:%M})")
+            st.write(f"Total prediction horizon: {hours_ahead} hours")
 
-            # Baseline pollution (historical average or latest reading)
-            pool = history.loc[
-                (history.index.month == target_time.month) & 
-                (history.index.day == target_time.day) & 
-                (history.index.hour == target_time.hour), "pollution"]
-            baseline = float(pool.mean()) if len(pool) > 0 else history["pollution"].iloc[-1]
-            st.session_state.hist_avg = baseline
+            # 6) Button to trigger forecast
+            if st.button("Predict PM₂.₅"):
+                # Seed based on target
+                seed = hash(str(target_datetime)) % (2*32)
+                random.seed(seed)
+                np.random.seed(seed)
 
-            # Get weather at current time
-            wx = get_weather(target_time)
+                # Weather at now (starting point)
+                wx = get_weather(now)
 
-            # Prediction loop
-            H = [baseline] * 3  # Initialize history
-            preds = []
-            confs = []
+                # Baseline pollution
+                pool = history.loc[
+                    (history.index.month == now.month) & 
+                    (history.index.day == now.day) & 
+                    (history.index.hour == now.hour), "pollution"]
+                baseline = float(pool.mean()) if len(pool) > 0 else history["pollution"].iloc[-1]
+                st.session_state.hist_avg = baseline
 
-            for i in range(1, hours_ahead + 1):
-                dt = target_time + timedelta(hours=i)
-                rec = {
-                    "datetime": dt, 
-                    **wx,
-                    "pollution_lag1": H[-1],
-                    "pollution_lag2": H[-2],
-                    "pollution_roll_mean3": np.mean(H[-3:])
-                }
-                X = build_X(rec)
-                tree_preds = np.array([t.predict(X.values) for t in rf_model.estimators_])
-                p = float(rf_model.predict(X)[0])
-                ci = np.std(tree_preds) * 1.96
-                H.append(p)
-                preds.append({"datetime": dt, "pm25": p})
-                confs.append({"datetime": dt, "ci_lower": max(0, p - ci), "ci_upper": p + ci})
+                # Predict forward
+                H = [baseline] * 3
+                preds = []
+                confs = []
+                current_time = now
 
-            # Save to session state
-            df24 = pd.DataFrame(preds)
-            df_ci = pd.DataFrame(confs)
-            df24['pm25_smoothed'] = df24['pm25'].rolling(6, min_periods=1).mean()
-            st.session_state.df24 = df24
-            st.session_state.conf_intervals = df_ci
-            st.session_state.next_val = df24['pm25'].iloc[0]
-            st.session_state.color = to_aqi(df24['pm25'].iloc[0])[1]
-            st.session_state.aqi_info = to_aqi(df24['pm25'].iloc[0])
+                for i in range(1, hours_ahead + 1):
+                    dt = current_time + timedelta(hours=i)
+                    rec = {
+                        "datetime": dt, 
+                        **wx,
+                        "pollution_lag1": H[-1],
+                        "pollution_lag2": H[-2],
+                        "pollution_roll_mean3": np.mean(H[-3:])
+                    }
+                    X = build_X(rec)
+                    tree_preds = np.array([t.predict(X.values) for t in rf_model.estimators_])
+                    p = float(rf_model.predict(X)[0])
+                    ci = np.std(tree_preds) * 1.96
+                    H.append(p)
+                    preds.append({"datetime": dt, "pm25": p})
+                    confs.append({"datetime": dt, "ci_lower": max(0, p - ci), "ci_upper": p + ci})
+
+                df24 = pd.DataFrame(preds)
+                df_ci = pd.DataFrame(confs)
+                df24['pm25_smoothed'] = df24['pm25'].rolling(6, min_periods=1).mean()
+
+                # Save in session state
+                st.session_state.df24 = df24
+                st.session_state.conf_intervals = df_ci
+                st.session_state.next_val = df24['pm25'].iloc[0]
+                st.session_state.color = to_aqi(df24['pm25'].iloc[0])[1]
+                st.session_state.aqi_info = to_aqi(df24['pm25'].iloc[0])
 
         # 7) Display
         if st.session_state.df24 is not None:
