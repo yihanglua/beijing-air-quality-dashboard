@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 import random
 import gdown
 from datetime import datetime, timedelta, time as dtime
+from zoneinfo import ZoneInfo
 
 # ── 1) Download and Load Model & Data ─────────────────────────────────────────
 
@@ -111,27 +112,39 @@ clim = (
 
 # ── 6) Live‐weather fetch (round to hour) ──────────────────────────────────────
 def fetch_weather(lat, lon, dt):
-    # floor dt to the hour
-    dt0 = dt.replace(minute=0, second=0, microsecond=0)
+    """
+    Fetch weather data from Open-Meteo API.
+    Converts dt to UTC and removes timezone info from the key to match API times.
+    """
+    # Convert dt to UTC and floor to hour
+    dt0 = dt.astimezone(ZoneInfo('UTC')).replace(minute=0, second=0, microsecond=0)
     start = dt0.strftime("%Y-%m-%dT%H:%M")
-    end   = (dt0 + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+    end = (dt0 + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+
     params = {
-      "latitude": lat, "longitude": lon,
-      "hourly": "temperature_2m,dewpoint_2m,pressure_msl,windspeed_10m",
-      "start": start, "end": end,
-      "timezone": "auto"
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "temperature_2m,dewpoint_2m,pressure_msl,windspeed_10m",
+        "start": start,
+        "end": end,
+        "timezone": "UTC"
     }
+
     r = requests.get("https://api.open-meteo.com/v1/forecast", params=params).json()["hourly"]
-    key = dt0.isoformat(timespec="minutes") 
+
+    # Remove timezone from key: API returns times like '2025-07-17T12:00'
+    key = dt0.replace(tzinfo=None).isoformat(timespec="minutes")  # Example: '2025-07-17T12:00'
+
     idx = r["time"].index(key)
+
     return {
-      "temp":    r["temperature_2m"][idx],
-      "dew":     r["dewpoint_2m"][idx],
-      "press":   r["pressure_msl"][idx],
-      "wnd_spd": r["windspeed_10m"][idx],
-      "snow":    0.0,
-      "rain":    0.0,
-      "wnd_dir": "NE"
+        "temp":    r["temperature_2m"][idx],
+        "dew":     r["dewpoint_2m"][idx],
+        "press":   r["pressure_msl"][idx],
+        "wnd_spd": r["windspeed_10m"][idx],
+        "snow":    0.0,
+        "rain":    0.0,
+        "wnd_dir": "NE"
     }
 
 def build_features_from_rec(rec):
@@ -605,8 +618,8 @@ with tab1:
         )
 
         # 1) Anchor “now”
-        now = datetime.now().replace(minute=0, second=0, microsecond=0)
-        st.markdown(f"*Data Referenced As Of:* {now:%Y-%m-%d %H:00}")
+        target_time = datetime.now(ZoneInfo('Asia/Kuala_Lumpur')).replace(minute=0, second=0, microsecond=0)
+        st.markdown(f"*Data Referenced As Of:* {target_time:%Y-%m-%d %H:00}")
 
         # 2) AQI mapping + full info (Refactored for clarity and robustness)
         def to_aqi(pm: float, age=None, condition=None, activity=None):
@@ -661,12 +674,13 @@ with tab1:
                 st.session_state[k] = None
 
         # 5) User input for target date and time
-        min_date = now + timedelta(days=1)
-        max_date = now + timedelta(days=30)
+        min_date = target_time + timedelta(days=1)
+        max_date = target_time + timedelta(days=30)
         target_date = st.date_input("Select target date", min_value=min_date, max_value=max_date, value=min_date)
-        target_hour = st.selectbox("Select target hour", range(24), index=now.hour)
+        target_hour = st.selectbox("Select target hour", range(24), index=target_time.hour)
         target_datetime = datetime.combine(target_date, dtime(hour=target_hour, minute=0, second=0))
-        hours_ahead = int((target_datetime - now).total_seconds() / 3600)
+        target_datetime = datetime.now(ZoneInfo('Asia/Kuala_Lumpur')).replace(minute=0, second=0, microsecond=0)
+        hours_ahead = int((target_datetime - target_time).total_seconds() / 3600)
 
         # 6) Trigger prediction with consistent seed
         if st.button("Predict PM₂.₅"):
@@ -677,23 +691,23 @@ with tab1:
 
             # Baseline: Use most recent historical value if pool is empty
             pool = history.loc[
-                (history.index.month == now.month) & 
-                (history.index.day == now.day) & 
-                (history.index.hour == now.hour), "pollution"]
+                (history.index.month == target_time.month) & 
+                (history.index.day == target_time.day) & 
+                (history.index.hour == target_time.hour), "pollution"]
             baseline = float(pool.mean()) if len(pool) > 0 else history["pollution"].iloc[-1]
             st.session_state.hist_avg = baseline
 
-            wx = get_weather(now)  # Use current weather, but seed ensures consistency in random parts
+            wx = get_weather(target_time)  # Use current weather, but seed ensures consistency in random parts
             H = [baseline] * 3  # Initial lag history
             preds = []
             confs = []
             for i in range(1, hours_ahead + 1):
-                dt = now + timedelta(hours=i)
+                dt = target_time + timedelta(hours=i)
                 rec = {"datetime": dt, **wx,
                        "pollution_lag1": H[-1], "pollution_lag2": H[-2], "pollution_roll_mean3": np.mean(H[-3:])}
                 X = build_X(rec)
                 tree_preds = np.array([t.predict(X.values) for t in rf_model.estimators_])  # ✔️ No warnings here
-                p = float(rf_model.predict(X)[0])
+                p = float(rf_model.predict(X)[0]) 
                 ci = np.std(tree_preds) * 1.96
                 H.append(p)
                 preds.append({"datetime": dt, "pm25": p})
@@ -716,7 +730,7 @@ with tab1:
             )
             _, _, advice, sens_advice, policy, _, _ = aqi_info
 
-            wx = get_weather(now)
+            wx = get_weather(target_time)
             st.session_state.current_weather = wx
 
             if 'current_weather' in st.session_state:
